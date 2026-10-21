@@ -1,128 +1,88 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Magic Hand Tracking Game</title>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Test</title>
+  <style>
+    /* 1. Dark night background */
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #0d0d1a;
+      color: #00E5FF;
+      font-family: sans-serif;
+      text-align: center;
+      overflow: hidden;
+    }
 
-    <!-- Load MediaPipe Hand Tracking -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    /* 2. Top status message */
+    #status {
+      padding: 15px;
+      font-size: 18px;
+      background: rgba(0, 0, 0, 0.8);
+      border-bottom: 2px solid #00E5FF;
+    }
 
-    <style>
-      body {
-        margin: 0;
-        background: #0d0d1a;
-        overflow: hidden;
-        font-family: sans-serif;
-        text-align: center;
+    /* 3. Fullscreen canvas */
+    canvas {
+      display: block;
+      margin: 20px auto;
+      border: 3px solid #00E5FF;
+      border-radius: 12px;
+      background-color: #1a1a33;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status">Tap the box below to Cast Spell!</div>
+  <canvas id="gameCanvas" width="320" height="400"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+
+    let isPinching = false;
+
+    // Draw function
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (isPinching) {
+        // PINCH / TAP ACTIVE: Pink Glowing Spell
+        ctx.beginPath();
+        ctx.arc(160, 200, 70, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(255, 0, 85, 0.7)";
+        ctx.fill();
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.stroke();
+
+        statusText.innerText = "✨ SPELL CAST! ✨";
+        statusText.style.color = "#FF0055";
+      } else {
+        // DEFAULT STATE: Cyan Blue Sphere
+        ctx.beginPath();
+        ctx.arc(160, 200, 40, 0, 2 * Math.PI);
+        ctx.fillStyle = "#00E5FF";
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.stroke();
+
+        statusText.innerText = "Tap the box below to Cast Spell!";
+        statusText.style.color = "#00E5FF";
       }
-      #status {
-        color: white;
-        font-size: 18px;
-        padding: 15px;
-        background: rgba(0,0,0,0.8);
-      }
-      /* Fullscreen camera canvas container */
-      #canvas-container {
-        position: relative;
-        width: 100vw;
-        height: 80vh;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-      }
-      video { display: none; }
-      canvas {
-        width: 100%;
-        max-width: 640px;
-        height: auto;
-        border: 3px solid #00E5FF;
-        border-radius: 12px;
-        transform: scaleX(-1); /* Mirror view */
-      }
-    </style>
-  </head>
-  <body>
+    }
 
-    <div id="status">Loading Camera & Hand Tracker...</div>
+    // Event listeners to simulate pinch gesture via screen tap/click
+    canvas.addEventListener('pointerdown', () => { isPinching = true; draw(); });
+    canvas.addEventListener('pointerup', () => { isPinching = false; draw(); });
 
-    <div id="canvas-container">
-      <video id="webcam" autoplay playsinline></video>
-      <canvas id="output_canvas" width="640" height="480"></canvas>
-    </div>
-
-    <script>
-      const videoElement = document.getElementById('webcam');
-      const canvasElement = document.getElementById('output_canvas');
-      const canvasCtx = canvasElement.getContext('2d');
-      const statusMsg = document.getElementById('status');
-
-      const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-      });
-
-      hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
-      });
-
-      hands.onResults((results) => {
-        // Draw the camera frame onto the screen
-        canvasCtx.save();
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-          statusMsg.innerText = "Hand Detected! Try Pinching.";
-          const landmarks = results.multiHandLandmarks[0];
-
-          // Draw green skeletal lines on hand
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
-          drawLandmarks(canvasCtx, landmarks, { color: '#FF0055', lineWidth: 2 });
-
-          // Get Thumb Tip (4) and Index Tip (8)
-          const thumb = landmarks[4];
-          const index = landmarks[8];
-
-          // Calculate distance for pinch
-          const distance = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-
-          if (distance < 0.08) {
-            // SPELL CAST EFFECT: Draw a bright glowing magic circle on screen!
-            statusMsg.innerText = "✨ SPELL CAST! (Pinch Active) ✨";
-            
-            canvasCtx.beginPath();
-            canvasCtx.arc(index.x * canvasElement.width, index.y * canvasElement.height, 60, 0, 2 * Math.PI);
-            canvasCtx.fillStyle = "rgba(255, 0, 85, 0.6)";
-            canvasCtx.fill();
-            canvasCtx.lineWidth = 5;
-            canvasCtx.strokeStyle = "#FFFFFF";
-            canvasCtx.stroke();
-          }
-        } else {
-          statusMsg.innerText = "Show your hand to the camera";
-        }
-        canvasCtx.restore();
-      });
-
-      const camera = new Camera(videoElement, {
-        onFrame: async () => {
-          await hands.send({ image: videoElement });
-        },
-        width: 640,
-        height: 480
-      });
-
-      camera.start().then(() => {
-        statusMsg.innerText = "Camera Active! Show your hand.";
-      }).catch(err => {
-        statusMsg.innerText = "Camera Permission Denied or Failed!";
-        console.error(err);
-      });
-    </script>
-  </body>
+    // Initial render
+    draw();
+  </script>
+</body>
 </html>

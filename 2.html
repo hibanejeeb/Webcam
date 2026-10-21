@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebXR Magic Hand Tracking Demo</title>
+
+    <!-- 1. Load A-Frame 3D Framework -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+    <!-- 2. Load MediaPipe Libraries for Camera & Hand Tracking -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+
+      /* Style for the overlay box showing your camera feed in the top-left */
+      #cam-container {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        z-index: 999;
+        width: 180px;
+        height: 135px;
+        border: 2px solid #00E5FF;
+        border-radius: 10px;
+        background-color: rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+      }
+
+      #webcam, #output_canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        transform: scaleX(-1); /* Mirror camera view for natural feel */
+      }
+
+      /* Status message at the top center */
+      #status-msg {
+        position: absolute;
+        top: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 999;
+        color: #ffffff;
+        font-family: sans-serif;
+        font-size: 16px;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 8px 16px;
+        border-radius: 20px;
+        border: 1px solid #00E5FF;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Top-center status display -->
+    <div id="status-msg">Initializing Camera & Hand Tracking...</div>
+
+    <!-- Top-left camera feedback window -->
+    <div id="cam-container">
+      <video id="webcam" autoplay playsinline></video>
+      <canvas id="output_canvas"></canvas>
+    </div>
+
+    <!-- 3D Scene Environment -->
+    <a-scene embedded>
+      <!-- Background Sky -->
+      <a-sky color="#0d0d1a"></a-sky>
+
+      <!-- 3D Ground Grid -->
+      <a-plane position="0 0 -4" rotation="-90 0 0" width="10" height="10" color="#1a1a33" wireframe="true"></a-plane>
+
+      <!-- Magic Energy Orb (Target object) -->
+      <a-sphere id="magicOrb" position="0 1.5 -3" radius="0.5" color="#00E5FF" material="emissive: #00E5FF; emissiveIntensity: 0.5"></a-sphere>
+
+      <!-- Text Label inside 3D world -->
+      <a-text id="spellText" value="Pinch Thumb & Index Finger to Cast Spell!" position="0 2.4 -3" align="center" color="#FFFFFF" scale="0.8 0.8 0.8"></a-text>
+
+      <!-- Lighting -->
+      <a-ambient-light color="#404040"></a-ambient-light>
+      <a-point-light position="0 2 -2" color="#00E5FF" intensity="1"></a-point-light>
+    </a-scene>
+
+    <script>
+      const videoElement = document.getElementById('webcam');
+      const canvasElement = document.getElementById('output_canvas');
+      const canvasCtx = canvasElement.getContext('2d');
+      const magicOrb = document.getElementById('magicOrb');
+      const spellText = document.getElementById('spellText');
+      const statusMsg = document.getElementById('status-msg');
+
+      // Initialize MediaPipe Hands tracking
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+
+      // Process each frame from camera
+      hands.onResults((results) => {
+        // Clear camera canvas overlay
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          statusMsg.innerText = "Hand Detected! Try Pinching.";
+          const landmarks = results.multiHandLandmarks[0];
+
+          // Draw skeletal joint lines on top-left overlay
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+          drawLandmarks(canvasCtx, landmarks, { color: '#FF0055', lineWidth: 1 });
+
+          // Get coordinates for Thumb Tip (Index 4) & Index Finger Tip (Index 8)
+          const thumb = landmarks[4];
+          const index = landmarks[8];
+
+          // Calculate distance between thumb tip and index tip
+          const distance = Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
+
+          // Pinch threshold condition
+          if (distance < 0.08) {
+            // TRIGGER MAGIC ATTACK ACTION
+            magicOrb.setAttribute('color', '#FF0055'); // Turn Bright Magenta
+            magicOrb.setAttribute('material', 'emissive', '#FF0055');
+            magicOrb.setAttribute('scale', '1.6 1.6 1.6'); // Enlarge sphere
+            spellText.setAttribute('value', '✨ SPELL CAST! ✨');
+            spellText.setAttribute('color', '#FF0055');
+          } else {
+            // Reset to default state
+            magicOrb.setAttribute('color', '#00E5FF');
+            magicOrb.setAttribute('material', 'emissive', '#00E5FF');
+            magicOrb.setAttribute('scale', '1 1 1');
+            spellText.setAttribute('value', 'Pinch Thumb & Index Finger to Cast Spell!');
+            spellText.setAttribute('color', '#FFFFFF');
+          }
+        } else {
+          statusMsg.innerText = "Show your hand to the camera";
+        }
+        canvasCtx.restore();
+      });
+
+      // Activate Tablet Camera
+      const camera = new Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({ image: videoElement });
+        },
+        width: 640,
+        height: 480
+      });
+
+      camera.start().then(() => {
+        statusMsg.innerText = "Camera Active! Show your hand.";
+      }).catch(err => {
+        statusMsg.innerText = "Camera Permission Denied or Failed!";
+        console.error(err);
+      });
+    </script>
+  </body>
+</html>

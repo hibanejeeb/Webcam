@@ -3,12 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebXR Magic Hand Tracking Demo</title>
+    <title>Magic Hand Tracking Game</title>
 
-    <!-- 1. Load A-Frame 3D Framework -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-
-    <!-- 2. Load MediaPipe Libraries for Camera & Hand Tracking -->
+    <!-- Load MediaPipe Hand Tracking -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
@@ -16,89 +13,52 @@
     <style>
       body {
         margin: 0;
+        background: #0d0d1a;
         overflow: hidden;
-      }
-
-      /* Style for the overlay box showing your camera feed in the top-left */
-      #cam-container {
-        position: absolute;
-        top: 15px;
-        left: 15px;
-        z-index: 999;
-        width: 180px;
-        height: 135px;
-        border: 2px solid #00E5FF;
-        border-radius: 10px;
-        background-color: rgba(0, 0, 0, 0.6);
-        overflow: hidden;
-      }
-
-      #webcam, #output_canvas {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        transform: scaleX(-1); /* Mirror camera view for natural feel */
-      }
-
-      /* Status message at the top center */
-      #status-msg {
-        position: absolute;
-        top: 15px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 999;
-        color: #ffffff;
         font-family: sans-serif;
-        font-size: 16px;
-        background: rgba(0, 0, 0, 0.7);
-        padding: 8px 16px;
-        border-radius: 20px;
-        border: 1px solid #00E5FF;
-        pointer-events: none;
+        text-align: center;
+      }
+      #status {
+        color: white;
+        font-size: 18px;
+        padding: 15px;
+        background: rgba(0,0,0,0.8);
+      }
+      /* Fullscreen camera canvas container */
+      #canvas-container {
+        position: relative;
+        width: 100vw;
+        height: 80vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      video { display: none; }
+      canvas {
+        width: 100%;
+        max-width: 640px;
+        height: auto;
+        border: 3px solid #00E5FF;
+        border-radius: 12px;
+        transform: scaleX(-1); /* Mirror view */
       }
     </style>
   </head>
-
   <body>
-    <!-- Top-center status display -->
-    <div id="status-msg">Initializing Camera & Hand Tracking...</div>
 
-    <!-- Top-left camera feedback window -->
-    <div id="cam-container">
+    <div id="status">Loading Camera & Hand Tracker...</div>
+
+    <div id="canvas-container">
       <video id="webcam" autoplay playsinline></video>
-      <canvas id="output_canvas"></canvas>
+      <canvas id="output_canvas" width="640" height="480"></canvas>
     </div>
-
-    <!-- 3D Scene Environment -->
-    <a-scene embedded>
-      <!-- Background Sky -->
-      <a-sky color="#0d0d1a"></a-sky>
-
-      <!-- 3D Ground Grid -->
-      <a-plane position="0 0 -4" rotation="-90 0 0" width="10" height="10" color="#1a1a33" wireframe="true"></a-plane>
-
-      <!-- Magic Energy Orb (Target object) -->
-      <a-sphere id="magicOrb" position="0 1.5 -3" radius="0.5" color="#00E5FF" material="emissive: #00E5FF; emissiveIntensity: 0.5"></a-sphere>
-
-      <!-- Text Label inside 3D world -->
-      <a-text id="spellText" value="Pinch Thumb & Index Finger to Cast Spell!" position="0 2.4 -3" align="center" color="#FFFFFF" scale="0.8 0.8 0.8"></a-text>
-
-      <!-- Lighting -->
-      <a-ambient-light color="#404040"></a-ambient-light>
-      <a-point-light position="0 2 -2" color="#00E5FF" intensity="1"></a-point-light>
-    </a-scene>
 
     <script>
       const videoElement = document.getElementById('webcam');
       const canvasElement = document.getElementById('output_canvas');
       const canvasCtx = canvasElement.getContext('2d');
-      const magicOrb = document.getElementById('magicOrb');
-      const spellText = document.getElementById('spellText');
-      const statusMsg = document.getElementById('status-msg');
+      const statusMsg = document.getElementById('status');
 
-      // Initialize MediaPipe Hands tracking
       const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
       });
@@ -110,42 +70,38 @@
         minTrackingConfidence: 0.6
       });
 
-      // Process each frame from camera
       hands.onResults((results) => {
-        // Clear camera canvas overlay
+        // Draw the camera frame onto the screen
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
           statusMsg.innerText = "Hand Detected! Try Pinching.";
           const landmarks = results.multiHandLandmarks[0];
 
-          // Draw skeletal joint lines on top-left overlay
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
-          drawLandmarks(canvasCtx, landmarks, { color: '#FF0055', lineWidth: 1 });
+          // Draw green skeletal lines on hand
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
+          drawLandmarks(canvasCtx, landmarks, { color: '#FF0055', lineWidth: 2 });
 
-          // Get coordinates for Thumb Tip (Index 4) & Index Finger Tip (Index 8)
+          // Get Thumb Tip (4) and Index Tip (8)
           const thumb = landmarks[4];
           const index = landmarks[8];
 
-          // Calculate distance between thumb tip and index tip
-          const distance = Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
+          // Calculate distance for pinch
+          const distance = Math.hypot(thumb.x - index.x, thumb.y - index.y);
 
-          // Pinch threshold condition
           if (distance < 0.08) {
-            // TRIGGER MAGIC ATTACK ACTION
-            magicOrb.setAttribute('color', '#FF0055'); // Turn Bright Magenta
-            magicOrb.setAttribute('material', 'emissive', '#FF0055');
-            magicOrb.setAttribute('scale', '1.6 1.6 1.6'); // Enlarge sphere
-            spellText.setAttribute('value', '✨ SPELL CAST! ✨');
-            spellText.setAttribute('color', '#FF0055');
-          } else {
-            // Reset to default state
-            magicOrb.setAttribute('color', '#00E5FF');
-            magicOrb.setAttribute('material', 'emissive', '#00E5FF');
-            magicOrb.setAttribute('scale', '1 1 1');
-            spellText.setAttribute('value', 'Pinch Thumb & Index Finger to Cast Spell!');
-            spellText.setAttribute('color', '#FFFFFF');
+            // SPELL CAST EFFECT: Draw a bright glowing magic circle on screen!
+            statusMsg.innerText = "✨ SPELL CAST! (Pinch Active) ✨";
+            
+            canvasCtx.beginPath();
+            canvasCtx.arc(index.x * canvasElement.width, index.y * canvasElement.height, 60, 0, 2 * Math.PI);
+            canvasCtx.fillStyle = "rgba(255, 0, 85, 0.6)";
+            canvasCtx.fill();
+            canvasCtx.lineWidth = 5;
+            canvasCtx.strokeStyle = "#FFFFFF";
+            canvasCtx.stroke();
           }
         } else {
           statusMsg.innerText = "Show your hand to the camera";
@@ -153,7 +109,6 @@
         canvasCtx.restore();
       });
 
-      // Activate Tablet Camera
       const camera = new Camera(videoElement, {
         onFrame: async () => {
           await hands.send({ image: videoElement });

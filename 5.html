@@ -1,0 +1,812 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RIFTGUARD | Room Defense</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #080b16;
+  color: white;
+  font-family: system-ui, sans-serif;
+}
+
+#room {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  padding: 18px;
+  gap: 10px;
+}
+
+.panel {
+  background: #080b16d9;
+  border: 1px solid #6b8cff70;
+  border-radius: 14px;
+  padding: 12px 16px;
+  backdrop-filter: blur(10px);
+}
+
+h1 {
+  font-size: 20px;
+  letter-spacing: 3px;
+  margin: 0 0 5px;
+  color: #a9c4ff;
+}
+
+.small { font-size: 12px; color: #c6d1ef; }
+.stat { font-size: 19px; font-weight: 800; }
+
+#healthbar {
+  height: 7px;
+  background: #302536;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 7px;
+  width: 160px;
+}
+
+#healthfill {
+  height: 100%;
+  width: 100%;
+  background: #49f5ae;
+  transition: width .2s;
+}
+
+#message {
+  position: absolute;
+  top: 25%;
+  width: 100%;
+  text-align: center;
+  font-size: clamp(20px, 4vw, 42px);
+  font-weight: 900;
+  color: white;
+  text-shadow: 0 0 20px #765aff;
+}
+
+#bottom {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 95%;
+  text-align: center;
+}
+
+#start {
+  pointer-events: auto;
+  background: linear-gradient(110deg, #6845ff, #00bce5);
+  border: 0;
+  padding: 15px 25px;
+  color: white;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+#help {
+  font-size: 12px;
+  color: white;
+  background: #080b16e8;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+#gesture {
+  color: #83f5ff;
+  font-weight: bold;
+}
+
+#cameraStatus {
+  font-size: 12px;
+  color: #c6d1ef;
+  margin-top: 5px;
+}
+
+</style>
+</head>
+
+<body>
+
+<video id="room" autoplay muted playsinline></video>
+<div id="game"></div>
+
+<div id="hud">
+  <div class="top">
+    <div class="panel">
+      <h1>RIFTGUARD</h1>
+      <div class="small">REALITY DEFENSE PROTOCOL</div>
+      <div id="cameraStatus">Camera not started</div>
+    </div>
+
+    <div class="panel">
+      <div class="small">PLAYER HEALTH</div>
+      <div class="stat" id="healthText">100 / 100</div>
+      <div id="healthbar"><div id="healthfill"></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="small">SCORE</div>
+      <div class="stat" id="score">0</div>
+      <div class="small">Wave <span id="wave">1</span></div>
+    </div>
+  </div>
+
+  <div id="message">YOUR ROOM. THEIR NIGHTMARE.</div>
+
+  <div id="bottom">
+    <button id="start">ACTIVATE RIFTGUARD</button>
+    <div id="help">
+      ✊ FIST = FIRE &nbsp; | &nbsp;
+      🖐 OPEN PALM = SHIELD &nbsp; | &nbsp;
+      ↔ QUICK SWIPE = LIGHTNING
+      <br>
+      <span id="gesture">Start the game and show your hand to the camera.</span>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import {
+  HandLandmarker,
+  FilesetResolver
+} from "@mediapipe/tasks-vision";
+
+// ---------- GAME SETUP ----------
+
+const video = document.querySelector("#room");
+const game = document.querySelector("#game");
+const message = document.querySelector("#message");
+const startButton = document.querySelector("#start");
+const gestureText = document.querySelector("#gesture");
+
+let running = false;
+let handTracker = null;
+let health = 100;
+let score = 0;
+let kills = 0;
+let wave = 1;
+let spawnClock = 0;
+let lastTime = 0;
+let lastFire = 0;
+let lastLightning = 0;
+let lastDamage = 0;
+let previousHandX = null;
+let previousHandTime = 0;
+let shieldActive = false;
+let lastVideoTime = -1;
+
+const enemies = [];
+const effects = [];
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.OrthographicCamera(
+  -5, 5, 5, -5, 0.1, 100
+);
+camera.position.z = 20;
+
+const renderer = new THREE.WebGLRenderer({
+  alpha: true,
+  antialias: true
+});
+
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 0);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+game.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 2));
+
+const light = new THREE.PointLight(0x738bff, 35, 30);
+light.position.set(0, 3, 8);
+scene.add(light);
+
+function resize() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const h = 5;
+
+  camera.left = -h * aspect;
+  camera.right = h * aspect;
+  camera.top = h;
+  camera.bottom = -h;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+// ---------- MATERIALS ----------
+
+const mat = (color, emissive = 0x000000) =>
+  new THREE.MeshStandardMaterial({
+    color,
+    emissive,
+    emissiveIntensity: emissive ? 1.3 : 0.2,
+    roughness: 0.65
+  });
+
+const green = mat(0x399b4b, 0x092a0b);
+const darkGreen = mat(0x205a30);
+const bellyMat = mat(0x82bd58);
+const earMat = mat(0x4cb75a);
+const eyeMat = new THREE.MeshStandardMaterial({
+  color: 0xffe86a,
+  emissive: 0xff6200,
+  emissiveIntensity: 2
+});
+const black = mat(0x111522);
+const purple = mat(0x711dff, 0x5411ff);
+const fireMat = new THREE.MeshBasicMaterial({
+  color: 0xff6b21
+});
+const blueMat = new THREE.MeshBasicMaterial({
+  color: 0x59eaff
+});
+
+// ---------- 3D GOBLIN ----------
+
+function addMesh(parent, geometry, material, x, y, z) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x, y, z);
+  parent.add(mesh);
+  return mesh;
+}
+
+function makeGoblin() {
+  const root = new THREE.Group();
+
+  // Torso
+  const body = addMesh(
+    root,
+    new THREE.SphereGeometry(0.43, 16, 12),
+    darkGreen, 0, -0.05, 0
+  );
+  body.scale.set(0.85, 1.15, 0.7);
+
+  // Head
+  const head = addMesh(
+    root,
+    new THREE.SphereGeometry(0.39, 20, 16),
+    green, 0, 0.55, 0
+  );
+  head.scale.set(1.08, 0.95, 0.85);
+
+  // Pointed ears
+  for (const side of [-1, 1]) {
+    const ear = addMesh(
+      root,
+      new THREE.ConeGeometry(0.14, 0.5, 5),
+      earMat, side * 0.43, 0.62, 0
+    );
+    ear.rotation.z = -side * 1.05;
+
+    // Eyes
+    addMesh(
+      root,
+      new THREE.SphereGeometry(0.075, 12, 10),
+      eyeMat, side * 0.15, 0.61, 0.31
+    );
+
+    // Arms
+    const arm = addMesh(
+      root,
+      new THREE.CapsuleGeometry(0.11, 0.35, 4, 8),
+      green, side * 0.44, -0.05, 0
+    );
+    arm.rotation.z = side * 0.55;
+
+    // Hands
+    addMesh(
+      root,
+      new THREE.SphereGeometry(0.12, 10, 8),
+      darkGreen, side * 0.58, -0.27, 0
+    );
+
+    // Legs
+    const leg = addMesh(
+      root,
+      new THREE.CapsuleGeometry(0.12, 0.3, 4, 8),
+      darkGreen, side * 0.18, -0.55, 0
+    );
+    leg.rotation.z = side * 0.08;
+  }
+
+  // Belly
+  const belly = addMesh(
+    root,
+    new THREE.SphereGeometry(0.25, 14, 10),
+    bellyMat, 0, -0.12, 0.29
+  );
+  belly.scale.set(0.85, 0.9, 0.45);
+
+  // Nose
+  addMesh(
+    root,
+    new THREE.ConeGeometry(0.09, 0.2, 6),
+    bellyMat, 0, 0.48, 0.36
+  ).rotation.x = Math.PI / 2;
+
+  // Mouth
+  const mouth = addMesh(
+    root,
+    new THREE.BoxGeometry(0.23, 0.045, 0.035),
+    black, 0, 0.32, 0.33
+  );
+
+  // Back spikes
+  for (let i = 0; i < 3; i++) {
+    addMesh(
+      root,
+      new THREE.ConeGeometry(0.09, 0.24, 5),
+      darkGreen, -0.22 + i * 0.22, 0.2, -0.28
+    ).rotation.x = -0.5;
+  }
+
+  // Magical aura
+  const aura = new THREE.Mesh(
+    new THREE.TorusGeometry(0.57, 0.025, 6, 32),
+    purple
+  );
+  aura.position.z = -0.15;
+  root.add(aura);
+
+  root.userData.parts = { body, head, aura };
+  return root;
+}
+
+// ---------- SPAWNING ----------
+
+function createPortal(x, y) {
+  const group = new THREE.Group();
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.55, 0.07, 8, 36),
+    purple
+  );
+  group.add(ring);
+
+  const core = new THREE.Mesh(
+    new THREE.CircleGeometry(0.49, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x220055,
+      transparent: true,
+      opacity: 0.65
+    })
+  );
+  core.position.z = -0.03;
+  group.add(core);
+
+  group.position.set(x, y, 0);
+  scene.add(group);
+
+  effects.push({
+    object: group,
+    life: 1.2,
+    type: "portal"
+  });
+}
+
+function spawnEnemy() {
+  const aspect = window.innerWidth / window.innerHeight;
+  const xLimit = Math.min(3.8, 4.5 * aspect);
+
+  // Different room regions:
+  // left = furniture, middle = floor/table, right = portal
+  const zone = Math.floor(Math.random() * 3);
+
+  let x;
+  if (zone === 0) x = -xLimit * 0.65;
+  else if (zone === 1) x = (Math.random() - 0.5) * xLimit;
+  else x = xLimit * 0.65;
+
+  const y = 1.7 + Math.random() * 1.5;
+
+  if (zone === 2) createPortal(x, y);
+
+  const goblin = makeGoblin();
+  const size = 0.8 + Math.random() * 0.35;
+
+  goblin.scale.setScalar(size);
+  goblin.position.set(x, y, 1);
+  scene.add(goblin);
+
+  const enemy = {
+    object: goblin,
+    x,
+    y,
+    speed: 0.45 + wave * 0.045 + Math.random() * 0.15,
+    hp: 1,
+    phase: Math.random() * 6,
+    size
+  };
+
+  enemies.push(enemy);
+}
+
+// ---------- SPELL EFFECTS ----------
+
+function makeBurst(x, y, color, type = "burst") {
+  const group = new THREE.Group();
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.16, 0.035, 6, 24),
+    color
+  );
+  group.add(ring);
+
+  for (let i = 0; i < 7; i++) {
+    const particle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 6, 6),
+      color
+    );
+    const angle = i / 7 * Math.PI * 2;
+    particle.position.set(
+      Math.cos(angle) * 0.2,
+      Math.sin(angle) * 0.2,
+      0.1
+    );
+    group.add(particle);
+  }
+
+  group.position.set(x, y, 3);
+  scene.add(group);
+
+  effects.push({ object: group, life: 0.45, type });
+}
+
+function fireSpell(x, y) {
+  makeBurst(x, y, fireMat, "fire");
+
+  // Hit the nearest enemy close to the hand position.
+  let target = null;
+  let distance = 1.35;
+
+  for (const enemy of enemies) {
+    const d = Math.hypot(enemy.x - x, enemy.y - y);
+    if (d < distance) {
+      target = enemy;
+      distance = d;
+    }
+  }
+
+  if (target) defeatEnemy(target);
+}
+
+function lightningSpell(x, y) {
+  makeBurst(x, y, blueMat, "lightning");
+
+  // Lightning has a larger hit radius.
+  for (const enemy of [...enemies]) {
+    if (Math.hypot(enemy.x - x, enemy.y - y) < 2.1) {
+      defeatEnemy(enemy);
+    }
+  }
+}
+
+function defeatEnemy(enemy) {
+  const index = enemies.indexOf(enemy);
+  if (index === -1) return;
+
+  makeBurst(enemy.x, enemy.y, eyeMat);
+  scene.remove(enemy.object);
+  enemies.splice(index, 1);
+
+  score += 100;
+  kills++;
+
+  if (kills > 0 && kills % 5 === 0) {
+    wave++;
+    document.querySelector("#wave").textContent = wave;
+    message.textContent = "WAVE " + wave + " — THEY ARE ADAPTING";
+    setTimeout(() => {
+      if (running) message.textContent = "";
+    }, 1400);
+  }
+
+  document.querySelector("#score").textContent = score;
+}
+
+// ---------- HAND TRACKING ----------
+
+function fingerExtended(landmarks, tip, pip) {
+  return landmarks[tip].y < landmarks[pip].y;
+}
+
+function getGesture(landmarks) {
+  const index = fingerExtended(landmarks, 8, 6);
+  const middle = fingerExtended(landmarks, 12, 10);
+  const ring = fingerExtended(landmarks, 16, 14);
+  const pinky = fingerExtended(landmarks, 20, 18);
+
+  const count = [index, middle, ring, pinky]
+    .filter(Boolean).length;
+
+  // Simplified gesture classification; not a full sign-language model.
+  if (count >= 4) return "shield";
+  if (count === 0) return "fire";
+  return "ready";
+}
+
+function handToWorld(landmark) {
+  const aspect = window.innerWidth / window.innerHeight;
+
+  return {
+    x: (0.5 - landmark.x) * 10 * aspect,
+    y: (0.5 - landmark.y) * 10
+  };
+}
+
+async function setupHandTracking() {
+  gestureText.textContent = "Loading hand-tracking model...";
+
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+
+  handTracker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 1
+  });
+
+  gestureText.textContent = "Hand tracking ready!";
+}
+
+function updateHands(now) {
+  if (!handTracker || video.readyState < 2) return;
+
+  if (video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+
+  const result = handTracker.detectForVideo(video, now);
+
+  if (!result.landmarks || !result.landmarks.length) {
+    shieldActive = false;
+    gestureText.textContent = "Show one hand to cast spells";
+    previousHandX = null;
+    return;
+  }
+
+  const landmarks = result.landmarks[0];
+  const palm = landmarks[9];
+  const pos = handToWorld(palm);
+  const gesture = getGesture(landmarks);
+
+  shieldActive = gesture === "shield";
+
+  if (shieldActive) {
+    gestureText.textContent = "SHIELD ACTIVE";
+  } else if (gesture === "fire") {
+    gestureText.textContent = "FIRE SPELL";
+  } else {
+    gestureText.textContent = "Move your hand quickly for lightning";
+  }
+
+  // A fast horizontal hand movement casts lightning.
+  const dt = now - previousHandTime;
+  if (previousHandX !== null && dt > 0 && dt < 180) {
+    const speed = Math.abs(pos.x - previousHandX) / dt;
+
+    if (speed > 0.012 && now - lastLightning > 700) {
+      lightningSpell(pos.x, pos.y);
+      lastLightning = now;
+    }
+  }
+
+  previousHandX = pos.x;
+  previousHandTime = now;
+
+  // Fist casts fire repeatedly, with a cooldown.
+  if (gesture === "fire" && now - lastFire > 650) {
+    fireSpell(pos.x, pos.y);
+    lastFire = now;
+  }
+}
+
+// ---------- GAME LOOP ----------
+
+function update(dt, now) {
+  if (!running) return;
+
+  spawnClock += dt;
+
+  const spawnInterval = Math.max(1.1, 3.1 - wave * 0.18);
+
+  if (spawnClock >= spawnInterval && enemies.length < 8) {
+    spawnClock = 0;
+    spawnEnemy();
+  }
+
+  for (const enemy of [...enemies]) {
+    enemy.y -= enemy.speed * dt;
+    enemy.object.position.y = enemy.y;
+
+    enemy.phase += dt * 5;
+    enemy.object.rotation.z = Math.sin(enemy.phase) * 0.09;
+
+    const parts = enemy.object.userData.parts;
+    parts.head.rotation.z = Math.sin(enemy.phase * 0.7) * 0.08;
+    parts.aura.rotation.z += dt * 0.9;
+
+    // Enemies reach the player at the bottom of the scene.
+    if (enemy.y < -3.6) {
+      scene.remove(enemy.object);
+      enemies.splice(enemies.indexOf(enemy), 1);
+
+      if (!shieldActive && now - lastDamage > 450) {
+        health = Math.max(0, health - 12);
+        lastDamage = now;
+
+        document.querySelector("#healthText").textContent =
+          health + " / 100";
+        document.querySelector("#healthfill").style.width =
+          health + "%";
+      }
+
+      if (health <= 0) endGame();
+    }
+  }
+
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const effect = effects[i];
+    effect.life -= dt;
+
+    const scale = effect.type === "portal"
+      ? 1 + Math.sin(now / 120) * 0.06
+      : 1 + (1 - Math.max(0, effect.life)) * 2;
+
+    effect.object.scale.setScalar(scale);
+
+    if (effect.type !== "portal") {
+      effect.object.children.forEach((child, index) => {
+        if (child.position.length() > 0.01) {
+          child.position.multiplyScalar(1.025);
+        }
+      });
+    }
+
+    if (effect.life <= 0) {
+      scene.remove(effect.object);
+      effects.splice(i, 1);
+    }
+  }
+}
+
+function endGame() {
+  running = false;
+  message.textContent = "REALITY OVERRUN";
+  startButton.textContent = "PLAY AGAIN";
+  startButton.style.display = "inline-block";
+  gestureText.textContent = "Final score: " + score;
+}
+
+function animate(now) {
+  requestAnimationFrame(animate);
+
+  const dt = Math.min((now - (lastTime || now)) / 1000, 0.05);
+  lastTime = now;
+
+  if (running) {
+    updateHands(now);
+    update(dt, now);
+  }
+
+  renderer.render(scene, camera);
+}
+
+requestAnimationFrame(animate);
+
+// ---------- START BUTTON ----------
+
+startButton.addEventListener("click", async () => {
+  startButton.disabled = true;
+  message.textContent = "PREPARING YOUR ROOM...";
+
+  try {
+    if (!video.srcObject) {
+      video.srcObject = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      await video.play();
+    }
+
+    if (!handTracker) await setupHandTracking();
+
+    // Reset the game.
+    for (const enemy of enemies) scene.remove(enemy.object);
+    for (const effect of effects) scene.remove(effect.object);
+
+    enemies.length = 0;
+    effects.length = 0;
+
+    health = 100;
+    score = 0;
+    kills = 0;
+    wave = 1;
+    spawnClock = 0;
+    previousHandX = null;
+
+    document.querySelector("#healthText").textContent = "100 / 100";
+    document.querySelector("#healthfill").style.width = "100%";
+    document.querySelector("#score").textContent = "0";
+    document.querySelector("#wave").textContent = "1";
+    document.querySelector("#cameraStatus").textContent =
+      "Camera connected";
+
+    message.textContent = "THE RIFTS ARE OPEN";
+    startButton.style.display = "none";
+    gestureText.textContent = "Defend your room!";
+
+    running = true;
+
+    setTimeout(() => {
+      if (running) message.textContent = "";
+    }, 1800);
+
+  } catch (error) {
+    console.error(error);
+    message.textContent = "CAMERA OR TRACKING ERROR";
+    gestureText.textContent =
+      "Allow camera access and reload. Check your internet connection.";
+    startButton.disabled = false;
+    startButton.textContent = "TRY AGAIN";
+  }
+});
+
+</script>
+</body>
+</html>
